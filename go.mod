@@ -3,6 +3,7 @@ module github.com/amazeeio/lagoon-restore-files-task
 go 1.24.1
 
 require (
+	github.com/dustin/go-humanize v1.0.1
 	github.com/k8up-io/k8up/v2 v2.12.0
 	github.com/mholt/archives v0.1.2
 	github.com/uselagoon/machinery v0.0.34

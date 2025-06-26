@@ -41,14 +41,14 @@ func RestoreToPVC(t *task.RestoreTask) (*RestoreToPVCResult, error) {
 	log.Printf("Restore task name: %s", t.TaskKey)
 	fmt.Println()
 
-	pvc, err := t.CreateRestorePVC()
+	pvc, err := t.CreateRestorePVC(fmt.Sprintf("restore-target-%s", t.TaskKey), "1Gi")
 	if err != nil {
 		log.Fatalf("Failed to create restore destination: %v", err)
 	}
 
 	restore, err := t.StartRestore(pvc)
 	if err != nil {
-		t.Cleanup(&pvc, nil)
+		t.Cleanup(&pvc, nil, nil)
 		log.Fatalf("Failed to start restore: %v", err)
 	} else {
 		log.Println("Starting restore")
@@ -56,7 +56,7 @@ func RestoreToPVC(t *task.RestoreTask) (*RestoreToPVCResult, error) {
 
 	err = t.WaitForRestore(restore)
 	if err != nil {
-		t.Cleanup(&pvc, &restore)
+		t.Cleanup(&pvc, &restore, nil)
 		log.Fatalf("Failed to wait for restore: %v", err)
 	}
 	fmt.Println()
@@ -84,7 +84,7 @@ func RestoreToPVC(t *task.RestoreTask) (*RestoreToPVCResult, error) {
 		// 	log.Printf("Failed to get logs: %v", err)
 		// }
 
-		t.Cleanup(&pvc, &restore)
+		t.Cleanup(&pvc, &restore, nil)
 
 		return &RestoreToPVCResult{}, fmt.Errorf("restore failed: %w", restoreFailed)
 	} else {
@@ -97,7 +97,7 @@ func RestoreToPVC(t *task.RestoreTask) (*RestoreToPVCResult, error) {
 		return &RestoreToPVCResult{
 			PVC:     &pvc,
 			Restore: &restore,
-			Cleanup: func() { t.Cleanup(&pvc, &restore) },
+			Cleanup: func() { t.Cleanup(&pvc, &restore, nil) },
 		}, nil
 	}
 }

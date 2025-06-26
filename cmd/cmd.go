@@ -68,6 +68,8 @@ func Execute() {
 	tokenHost := flag.String("token-host", tokenHostEnv, "SSH token host")
 	tokenPort := flag.String("token-port", tokenPortEnv, "SSH token port")
 	apiHost := flag.String("api-host", apiHostEnv, "Lagoon API host")
+	taskImage := flag.String("task-image", "", "Task image")
+	skipBootstrap := flag.Bool("skip-bootstrap", false, "Skip bootstrap upload pod")
 
 	flag.Parse()
 
@@ -99,9 +101,10 @@ func Execute() {
 
 	subcommand := flag.Args()[0]
 
+	// This is running as a sub-pod of the main task to upload the restored files.
 	if subcommand == "upload" {
-		if *taskId == "" || *tokenHost == "" || *tokenPort == "" || *apiHost == "" {
-			log.Fatalf("Missing one of: task id, token host, token port, api host")
+		if *backupId == "" || *taskId == "" || *tokenHost == "" || *tokenPort == "" || *apiHost == "" {
+			log.Fatalf("Missing one of: backup id, task id, token host, token port, api host")
 		}
 
 		UploadPVCToTask(t, *restoreTarget, *archiveTarget)
@@ -112,7 +115,7 @@ func Execute() {
 		log.Fatalf("Unknown subcommand %s", subcommand)
 	}
 
-	// Default case is to start a Restore.
+	// This is the main task that restores files and starts a sub-pod to upload it to Lagoon.
 	if *backupId == "" || *restoreFilter == "" || *taskNamespace == "" || *taskId == "" {
 		log.Fatalf("Missing one of: namespace, task id, snapshot id, or restore filter")
 	}
@@ -128,8 +131,28 @@ func Execute() {
 		log.Fatalf("Failed to restore backup: %v", err)
 	}
 
-	// TODO create/start pod to upload restore
-
 	log.Println("Restore completed")
+
+	if !*skipBootstrap {
+		log.Println("Starting upload")
+		fmt.Println()
+
+		bootstrapResult, err := BootstrapUploadPod(t, *taskImage, *restoreTarget, restoreResult.PVC, *archiveTarget)
+		if err != nil {
+			restoreResult.Cleanup()
+			log.Fatalf("Failed to upload restore to task: %v", err)
+		}
+
+		fmt.Println()
+		log.Println("Upload completed")
+
+		bootstrapResult.Cleanup()
+	}
+
 	restoreResult.Cleanup()
+
+	fmt.Println()
+	log.Println("==================")
+	log.Println("Task completed")
+	log.Println("==================")
 }

@@ -26,7 +26,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 
 	k8upv1 "github.com/k8up-io/k8up/v2/api/v1"
 	"github.com/mholt/archives"
@@ -127,11 +126,11 @@ func NewRestoreTask(
 }
 
 // CreateRestorePVC creates a PVC to attach to a k8up Restore.
-func (t *RestoreTask) CreateRestorePVC() (corev1.PersistentVolumeClaim, error) {
+func (t *RestoreTask) CreateRestorePVC(name string, size string) (corev1.PersistentVolumeClaim, error) {
 	storageClassName := "bulk"
 	pvc := corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("target-%s", t.TaskKey),
+			Name: name,
 			Annotations: map[string]string{
 				"k8up.io/backup": "false", // Ensure backups skip this PVC.
 			},
@@ -143,7 +142,7 @@ func (t *RestoreTask) CreateRestorePVC() (corev1.PersistentVolumeClaim, error) {
 				Requests: corev1.ResourceList{
 					// When bulk storage is backed by NFS, the size doesn't matter.
 					// There is no way to know ahead of time how large the restored files will be.
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
+					corev1.ResourceStorage: resource.MustParse(size),
 				},
 			},
 		},
@@ -254,6 +253,29 @@ func (t *RestoreTask) PrintRestoreLogs(restore k8upv1.Restore) error {
 		return fmt.Errorf("failed to find restore pods")
 	}
 
+	t.printPodLogs(podList)
+
+	return nil
+}
+
+func (t *RestoreTask) PrintUploadLogs(uploadPod corev1.Pod) error {
+	podList, err := t.Clientset.CoreV1().Pods(uploadPod.Namespace).List(t.Ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("metadata.name=%s", uploadPod.Name),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list upload pods: %w", err)
+	}
+
+	if len(podList.Items) == 0 {
+		return fmt.Errorf("failed to find upload pods")
+	}
+
+	t.printPodLogs(podList)
+
+	return nil
+}
+
+func (t *RestoreTask) printPodLogs(podList *corev1.PodList) {
 	for _, pod := range podList.Items {
 		req := t.Clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{})
 		stream, err := req.Stream(t.Ctx)
@@ -267,16 +289,25 @@ func (t *RestoreTask) PrintRestoreLogs(restore k8upv1.Restore) error {
 			log.Printf("Failed to print logs: %v", err)
 		}
 	}
-
-	return nil
 }
 
-// Cleanup cleans up PVC and Restore resources.
-func (t *RestoreTask) Cleanup(pvc *corev1.PersistentVolumeClaim, restore *k8upv1.Restore) {
+// Cleanup cleans up task resources.
+func (t *RestoreTask) Cleanup(
+	pvc *corev1.PersistentVolumeClaim,
+	restore *k8upv1.Restore,
+	uploadPod *corev1.Pod,
+) {
 	if restore != nil {
 		err := t.Client.Delete(t.Ctx, restore)
 		if err != nil {
 			log.Printf("Failed to clean up restore: %v", err)
+		}
+	}
+
+	if uploadPod != nil {
+		err := t.Client.Delete(t.Ctx, uploadPod)
+		if err != nil {
+			log.Printf("Failed to clean up pod: %v", err)
 		}
 	}
 
@@ -328,11 +359,14 @@ func (t *RestoreTask) ArchiveRestore(restoreTarget string, archiveTarget string)
 
 // UploadArchiveToLagoon uploads a given file to the Lagoon API.
 func (t *RestoreTask) UploadArchiveToLagoon(archive *os.File) error {
-	tkn, err := sshtoken.RetrieveToken("", t.TokenHost, t.TokenPort, nil, nil, false)
+	token, err := sshtoken.RetrieveToken("/var/run/secrets/lagoon/ssh/ssh-privatekey", t.TokenHost, t.TokenPort, nil, nil, false)
 	if err != nil {
 		return fmt.Errorf("failed to get Lagoon token: %v", err)
 	}
-	token := strings.TrimSpace(tkn)
+
+	if token == "" {
+		return fmt.Errorf("failed to get Lagoon token")
+	}
 
 	taskId, _ := strconv.Atoi(t.TaskId)
 	lc := lclient.New(
@@ -347,4 +381,44 @@ func (t *RestoreTask) UploadArchiveToLagoon(archive *os.File) error {
 	}
 
 	return nil
+}
+
+// WaitForUpload waits for the upload to complete or timeout.
+func (t *RestoreTask) WaitForUpload(pod corev1.Pod) error {
+	w, err := t.WatchingClient.Watch(t.Ctx, &corev1.PodList{}, &client.ListOptions{
+		Namespace:     pod.Namespace,
+		FieldSelector: fields.OneTermEqualSelector("metadata.name", pod.Name),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to watch upload: %w", err)
+	}
+	defer w.Stop()
+
+	for event := range w.ResultChan() {
+		uploadWatch, ok := event.Object.(*corev1.Pod)
+		if !ok {
+			// Watch query returned a non-pod type.
+			continue
+		}
+
+		if uploadWatch.Status.Phase == corev1.PodSucceeded || uploadWatch.Status.Phase == corev1.PodFailed {
+			break
+		}
+
+	}
+
+	w.Stop()
+
+	return nil
+}
+
+// GetTaskImageFromSelf attempts to get the pod image name if running in a task pod.
+func (t *RestoreTask) GetTaskImageFromSelf() string {
+	// Determine if the upload was a succcess.
+	var pod corev1.Pod
+	if err := t.Client.Get(t.Ctx, client.ObjectKey{Name: os.Getenv("PODNAME")}, &pod); err != nil {
+		return ""
+	} else {
+		return pod.Spec.Containers[0].Image
+	}
 }
