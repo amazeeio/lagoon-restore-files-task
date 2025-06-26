@@ -24,6 +24,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -37,7 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/runtime"
+	k8runtime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -47,6 +48,8 @@ import (
 // version/build information (populated at build time by make file)
 var (
 	TaskVersion = "0.x.x"
+	BuildDate   = ""
+	GoVersion   = runtime.Version()
 )
 
 type TaskArgs struct {
@@ -82,7 +85,7 @@ func NewRestoreTask(
 	apiHost string,
 ) (*RestoreTask, error) {
 	// Create a schema with k8up resources.
-	var clientScheme = runtime.NewScheme()
+	var clientScheme = k8runtime.NewScheme()
 	_ = scheme.AddToScheme(clientScheme)
 	_ = k8upv1.AddToScheme(clientScheme)
 

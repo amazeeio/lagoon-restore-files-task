@@ -119,6 +119,7 @@ func Execute() {
 
 	log.Println("==================")
 	log.Println("Restore Files Task")
+	log.Printf("%s (%s — %s)", task.TaskVersion, task.BuildDate, task.GoVersion)
 	log.Println("==================")
 	fmt.Println()
 
