@@ -44,6 +44,18 @@ func Execute() {
 	}
 	taskNamespaceEnv := os.Getenv("NAMESPACE")
 	taskIdEnv := os.Getenv("TASK_DATA_ID")
+	tokenHostEnv := os.Getenv("LAGOON_CONFIG_TOKEN_HOST")
+	if tokenHostEnv == "" {
+		tokenHostEnv = os.Getenv("TASK_SSH_HOST")
+	}
+	tokenPortEnv := os.Getenv("LAGOON_CONFIG_TOKEN_PORT")
+	if tokenPortEnv == "" {
+		tokenPortEnv = os.Getenv("TASK_SSH_PORT")
+	}
+	apiHostEnv := os.Getenv("LAGOON_CONFIG_API_HOST")
+	if apiHostEnv == "" {
+		apiHostEnv = os.Getenv("TASK_API_HOST")
+	}
 
 	// CLI flags for local development.
 	kubeconfig := flag.String("kubeconfig", "", "Absolute path to a kubeconfig file")
@@ -51,6 +63,11 @@ func Execute() {
 	taskId := flag.String("tid", taskIdEnv, "Task ID")
 	backupId := flag.String("bid", backupIdArg, "Backup ID")
 	restoreFilter := flag.String("filter", restoreFilterArg, "Restore filter")
+	restoreTarget := flag.String("restore-target", "/restore", "Path to restored files")
+	archiveTarget := flag.String("archive-target", "/archive", "Path to archive of restored files")
+	tokenHost := flag.String("token-host", tokenHostEnv, "SSH token host")
+	tokenPort := flag.String("token-port", tokenPortEnv, "SSH token port")
+	apiHost := flag.String("api-host", apiHostEnv, "Lagoon API host")
 
 	flag.Parse()
 
@@ -66,7 +83,16 @@ func Execute() {
 		log.Fatalf("Failed to load kubernetes config: %v", err)
 	}
 
-	t, err := task.NewRestoreTask(*backupId, *restoreFilter, kConfig, *taskNamespace, *taskId)
+	t, err := task.NewRestoreTask(
+		*backupId,
+		*restoreFilter,
+		kConfig,
+		*taskNamespace,
+		*taskId,
+		*tokenHost,
+		*tokenPort,
+		*apiHost,
+	)
 	if err != nil {
 		log.Fatalf("Failed to load task config: %v", err)
 	}
@@ -74,7 +100,12 @@ func Execute() {
 	subcommand := flag.Args()[0]
 
 	if subcommand == "upload" {
-		// TODO upload pvc files to lagoon task
+		if *taskId == "" || *tokenHost == "" || *tokenPort == "" || *apiHost == "" {
+			log.Fatalf("Missing one of: task id, token host, token port, api host")
+		}
+
+		UploadPVCToTask(t, *restoreTarget, *archiveTarget)
+		return
 	}
 
 	if subcommand != "restore" {

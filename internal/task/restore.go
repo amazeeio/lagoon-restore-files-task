@@ -22,8 +22,16 @@ import (
 	"io"
 	"log"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	k8upv1 "github.com/k8up-io/k8up/v2/api/v1"
+	"github.com/mholt/archives"
+	"github.com/uselagoon/machinery/api/lagoon"
+	lclient "github.com/uselagoon/machinery/api/lagoon/client"
+	"github.com/uselagoon/machinery/utils/sshtoken"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -34,6 +42,11 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// version/build information (populated at build time by make file)
+var (
+	TaskVersion = "0.x.x"
 )
 
 type TaskArgs struct {
@@ -53,6 +66,9 @@ type RestoreTask struct {
 	Clientset      kubernetes.Clientset
 	TaskId         string
 	TaskKey        string
+	TokenHost      string
+	TokenPort      string
+	APIHost        string
 }
 
 func NewRestoreTask(
@@ -61,6 +77,9 @@ func NewRestoreTask(
 	k8sConfig *rest.Config,
 	namespace string,
 	taskId string,
+	tokenHost string,
+	tokenPort string,
+	apiHost string,
 ) (*RestoreTask, error) {
 	// Create a schema with k8up resources.
 	var clientScheme = runtime.NewScheme()
@@ -97,6 +116,9 @@ func NewRestoreTask(
 		Clientset:      *clientSet,
 		TaskId:         taskId,
 		TaskKey:        fmt.Sprintf("rft-%s", taskId),
+		TokenHost:      tokenHost,
+		TokenPort:      tokenPort,
+		APIHost:        apiHost,
 		Ctx:            context.TODO(),
 	}, nil
 }
@@ -261,4 +283,65 @@ func (t *RestoreTask) Cleanup(pvc *corev1.PersistentVolumeClaim, restore *k8upv1
 			log.Printf("Failed to clean up pvc: %v", err)
 		}
 	}
+}
+
+// ArchiveRestore archives and compresses the restored files.
+func (t *RestoreTask) ArchiveRestore(restoreTarget string, archiveTarget string) (*os.File, error) {
+	_, err := os.Stat(restoreTarget)
+	if err != nil {
+		return &os.File{}, fmt.Errorf("invaid restore target %s: %v", restoreTarget, err)
+	}
+
+	// Specifying the files format as `"{restoreTarget}/": ""` ensures that the restore target dir is
+	// excluded from the archive.
+	rTarget := filepath.Clean(restoreTarget) + "/"
+	files, err := archives.FilesFromDisk(t.Ctx, nil, map[string]string{
+		rTarget: "",
+	})
+	if err != nil {
+		return &os.File{}, fmt.Errorf("failed to parse restore target files: %v", err)
+	}
+
+	aTarget := filepath.Join(archiveTarget, fmt.Sprintf("restore-%s-t%s.tar.gz", t.Args.BackupId, t.TaskId))
+	archive, err := os.Create(aTarget)
+	if err != nil {
+		return &os.File{}, fmt.Errorf("failed to create archive: %v", err)
+	}
+	defer archive.Close()
+
+	format := archives.CompressedArchive{
+		Compression: archives.Gz{},
+		Archival:    archives.Tar{},
+	}
+
+	// Archive and compress the restored files.
+	err = format.Archive(t.Ctx, archive, files)
+	if err != nil {
+		return &os.File{}, fmt.Errorf("failed to archive restore: %v", err)
+	}
+
+	return archive, nil
+}
+
+// UploadArchiveToLagoon uploads a given file to the Lagoon API.
+func (t *RestoreTask) UploadArchiveToLagoon(archive *os.File) error {
+	tkn, err := sshtoken.RetrieveToken("", t.TokenHost, t.TokenPort, nil, nil, false)
+	if err != nil {
+		return fmt.Errorf("failed to get Lagoon token: %v", err)
+	}
+	token := strings.TrimSpace(tkn)
+
+	taskId, _ := strconv.Atoi(t.TaskId)
+	lc := lclient.New(
+		t.APIHost+"/graphql",
+		fmt.Sprintf("RestoreTask-%s", TaskVersion),
+		"0.x",
+		&token,
+		true)
+	_, err = lagoon.UploadFilesForTask(context.TODO(), taskId, []string{archive.Name()}, lc)
+	if err != nil {
+		return fmt.Errorf("failed to upload restore to Lagoon task: %v", err)
+	}
+
+	return nil
 }

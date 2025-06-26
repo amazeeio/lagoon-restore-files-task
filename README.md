@@ -27,4 +27,16 @@ files are compressed and uploaded as a file to the advanced task.
 
 4. Edit the k8up Schedule resource to take a backup more frequently (eg `*/5 * * * *`).
 5. Pick a backup ID that backed up `nginx`.
-6. Run this program `go run . -kubeconfig ~/.config/k3d/kubeconfig-lagoon.yaml -bid 6c91b29 -filter /data/nginx/css -ns lagoon-demo-org-main -tid 0 restore`.
+
+### Testing restore
+
+1. Run this command `go run . -kubeconfig ~/.config/k3d/kubeconfig-lagoon.yaml -bid 6c91b29 -filter /data/nginx/css -ns lagoon-demo-org-main -tid 0 restore`.
+2. Monitor the relevant k8s resources in the provided namespace: k8upv1.Restore, batchv1.Job, corev1.Pod, corev1.PersistentVolumeClaim.
+
+### Testing upload
+
+1. Create some dummy local files to upload, eg `./restore-target/dummy.txt`, and an archive path, eg `./archive-target`.
+2. Ensure you have an ssh-agent running with a key added to your k3d lagoon.
+3. Run any task from the UI for the deployed environment from previous steps. Note the task ID.
+4. Run this command `go run . -kubeconfig ~/.config/k3d/kubeconfig-lagoon.yaml -tid 127 -token-host lagoon-ssh.172.20.0.242.nip.io -token-port 2020 -api-host 'http://lagoon-api.172.20.0.240.nip.io' -restore-target restore-target -archive-target archive-target upload`'
+5. Reload the task page and check the archive was uploaded.
