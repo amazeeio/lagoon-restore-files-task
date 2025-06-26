@@ -1,5 +1,4 @@
 PKG=github.com/amazeeio/lagoon-restore-files-task
-GO_VER ?= 1.24
 TAG     := $(shell git describe --abbrev=0 --tags 2>/dev/null || git rev-parse --abbrev-ref HEAD)
 COMMIT  := $(shell git rev-parse --short=8 HEAD)
 VERSION ?= $(TAG)+$(COMMIT)
@@ -31,7 +30,7 @@ build-dist:
 
 .PHONY: build-docker
 build-docker:
-	DOCKER_BUILDKIT=1 docker build --pull --build-arg VERSION=${VERSION} --build-arg BUILD_DATE=${BUILD_DATE} --build-arg GO_VER=${GO_VER} --rm -f build/Dockerfile -t lagoon/restore-files-task .
+	DOCKER_BUILDKIT=1 docker build --pull --build-arg VERSION=${VERSION} --build-arg BUILD_DATE=${BUILD_DATE} --rm -f build/Dockerfile -t lagoon/restore-files-task .
 
 .PHONY: k3d/push-images
 k3d/push-images:
