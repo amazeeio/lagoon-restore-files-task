@@ -27,6 +27,7 @@ import (
 
 	"github.com/amazeeio/lagoon-restore-files-task/internal/task"
 	"github.com/dustin/go-humanize"
+	k8upv1 "github.com/k8up-io/k8up/v2/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,6 +73,14 @@ func BootstrapUploadPod(t *task.RestoreTask, taskImage string, restoreTarget str
 	}
 	if uploadPodImageName == "" {
 		return &BootstrapResult{}, fmt.Errorf("failed to determine task image")
+	}
+
+	// Load the Schedule resource to get restic config.
+	var schedule k8upv1.Schedule
+	if err := t.Client.Get(t.Ctx, client.ObjectKey{
+		Name: "k8up-lagoon-backup-schedule",
+	}, &schedule); err != nil {
+		return &BootstrapResult{}, fmt.Errorf("failed to get schedule: %w", err)
 	}
 
 	jsonPayload, err := json.Marshal(t.Args)
@@ -168,6 +177,11 @@ func BootstrapUploadPod(t *task.RestoreTask, taskImage string, restoreTarget str
 			RestartPolicy:      corev1.RestartPolicyNever,
 			ServiceAccountName: "lagoon-deployer",
 		},
+	}
+
+	// Run as same user as the backups and services.
+	if schedule.Spec.PodSecurityContext != nil {
+		pod.Spec.SecurityContext = schedule.Spec.PodSecurityContext
 	}
 
 	err = t.Client.Create(context.TODO(), &pod)

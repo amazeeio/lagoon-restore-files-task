@@ -189,6 +189,11 @@ func (t *RestoreTask) StartRestore(pvc corev1.PersistentVolumeClaim) (k8upv1.Res
 		},
 	}
 
+	// Run as same user as the backups and services.
+	if schedule.Spec.PodSecurityContext != nil {
+		newRestore.Spec.RunnableSpec.PodSecurityContext = schedule.Spec.PodSecurityContext
+	}
+
 	err := t.Client.Create(t.Ctx, &newRestore)
 	if err != nil {
 		return k8upv1.Restore{}, fmt.Errorf("failed to create restore: %w", err)
